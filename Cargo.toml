@@ -1,0 +1,14 @@
+[package]
+name = "privdrop"
+version = "0.1.0"
+description = "A simple crate to drop privileges"
+authors = ["Frank Denis <github@pureftpd.org>"]
+keywords = ["privileges", "drop"]
+license = "ISC"
+homepage = "https://github.com/jedisct1/rust-privdrop"
+repository = "https://github.com/jedisct1/rust-privdrop"
+
+[dependencies]
+libc = "~0.2"
+nix = "~0.7"
+clippy = {version = ">=0", optional = true}
