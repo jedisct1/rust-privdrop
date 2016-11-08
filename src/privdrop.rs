@@ -38,7 +38,7 @@ impl PrivDrop {
 
     /// Apply the changes
     pub fn apply(self) -> Result<(), PrivDropError> {
-        try!(try!(try!(self.do_preload()).do_chroot()).do_userchange());
+        try!(try!(try!(self.do_preload()).do_chroot()).do_idchange());
         Ok(())
     }
 
@@ -63,7 +63,7 @@ impl PrivDrop {
         Ok(self)
     }
 
-    fn do_userchange(mut self) -> Result<Self, PrivDropError> {
+    fn do_idchange(mut self) -> Result<Self, PrivDropError> {
         let user = match self.user.take() {
             None => return Ok(self),
             Some(user) => user,
