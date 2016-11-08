@@ -64,19 +64,24 @@ impl PrivDrop {
     }
 
     fn do_userchange(mut self) -> Result<Self, PrivDropError> {
-        if let Some(user) = self.user.take() {
-            let pwent = unsafe {
-                libc::getpwnam(try!(CString::new(user).map_err(|_| {
-                        PrivDropError::from((ErrorKind::SysError,
-                                             "Unable to access the system user database"))
-                    }))
-                    .as_ptr())
-            };
-            if pwent.is_null() {
-                return Err(PrivDropError::from((ErrorKind::SysError, "User not found")));
-            }
-            let (uid, gid) = (unsafe { *pwent }.pw_uid, unsafe { *pwent }.pw_gid);
-            let gid = if let Some(group) = self.group.take() {
+        let user = match self.user.take() {
+            None => return Ok(self),
+            Some(user) => user,
+        };
+        let pwent = unsafe {
+            libc::getpwnam(try!(CString::new(user).map_err(|_| {
+                    PrivDropError::from((ErrorKind::SysError,
+                                         "Unable to access the system user database"))
+                }))
+                .as_ptr())
+        };
+        if pwent.is_null() {
+            return Err(PrivDropError::from((ErrorKind::SysError, "User not found")));
+        }
+        let (uid, gid) = (unsafe { *pwent }.pw_uid, unsafe { *pwent }.pw_gid);
+        let gid = match self.group.take() {
+            None => gid,
+            Some(group) => {
                 let grent = unsafe {
                     libc::getgrnam(try!(CString::new(group).map_err(|_| {
                             PrivDropError::from((ErrorKind::SysError,
@@ -88,16 +93,14 @@ impl PrivDrop {
                     return Err(PrivDropError::from((ErrorKind::SysError, "Group not found")));
                 }
                 unsafe { *grent }.gr_gid
-            } else {
-                gid
-            };
-            if unsafe { libc::setgroups(1, &gid) } != 0 {
-                return Err(PrivDropError::from((ErrorKind::SysError,
-                                                "Unable to revoke supplementary groups")));
             }
-            try!(unistd::setgid(gid));
-            try!(unistd::setuid(uid));
+        };
+        if unsafe { libc::setgroups(1, &gid) } != 0 {
+            return Err(PrivDropError::from((ErrorKind::SysError,
+                                            "Unable to revoke supplementary groups")));
         }
+        try!(unistd::setgid(gid));
+        try!(unistd::setuid(uid));
         Ok(self)
     }
 }
