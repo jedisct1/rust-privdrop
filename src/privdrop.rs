@@ -38,11 +38,12 @@ impl PrivDrop {
 
     /// Apply the changes
     pub fn apply(self) -> Result<(), PrivDropError> {
-        try!(try!(try!(self.do_preload()).do_chroot()).do_idchange());
+        try!(Self::preload());
+        try!(try!(self.do_chroot()).do_idchange());
         Ok(())
     }
 
-    fn do_preload(self) -> Result<Self, PrivDropError> {
+    fn preload() -> Result<(), PrivDropError> {
         unsafe {
             libc::strerror(1);
             libc::setlocale(libc::LC_CTYPE, CString::new("C").unwrap().as_ptr());
@@ -51,11 +52,21 @@ impl PrivDrop {
             libc::time(&mut now);
             libc::localtime(&now);
         }
-        Ok(self)
+        Ok(())
+    }
+
+    fn uidcheck() -> Result<(), PrivDropError> {
+        if unistd::geteuid() != 0 {
+            Err(PrivDropError::from((ErrorKind::SysError,
+                                     "Starting this application requires root privileges")))
+        } else {
+            Ok(())
+        }
     }
 
     fn do_chroot(mut self) -> Result<Self, PrivDropError> {
         if let Some(chroot) = self.chroot.take() {
+            try!(Self::uidcheck());
             try!(unistd::chdir(&chroot));
             try!(unistd::chroot(&chroot));
             try!(unistd::chdir("/"))
@@ -68,6 +79,7 @@ impl PrivDrop {
             None => return Ok(self),
             Some(user) => user,
         };
+        try!(Self::uidcheck());
         let pwent = unsafe {
             libc::getpwnam(try!(CString::new(user).map_err(|_| {
                     PrivDropError::from((ErrorKind::SysError,
