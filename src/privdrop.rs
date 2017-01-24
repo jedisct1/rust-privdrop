@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 ///
 /// # Example
 /// ```
-/// PrivDrop::default().chroot("/var/empty").user("_appuser").apply().unwrap();
+/// let _ok = privdrop::PrivDrop::default().chroot("/var/empty").user("_appuser").apply();
 /// ```
 #[derive(Default, Clone, Debug)]
 pub struct PrivDrop {
