@@ -4,7 +4,7 @@ use nix::unistd;
 use std::ffi::CString;
 use std::path::{Path, PathBuf};
 
-/// PrivDrop structure
+/// `PrivDrop` structure
 ///
 /// # Example
 /// ```
