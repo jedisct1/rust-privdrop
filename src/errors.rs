@@ -45,12 +45,16 @@ impl fmt::Display for PrivDropError {
 
 impl From<nix::Error> for PrivDropError {
     fn from(e: nix::Error) -> PrivDropError {
-        PrivDropError { repr: ErrorRepr::FromNix(e) }
+        PrivDropError {
+            repr: ErrorRepr::FromNix(e),
+        }
     }
 }
 
 impl From<(ErrorKind, &'static str)> for PrivDropError {
     fn from((kind, description): (ErrorKind, &'static str)) -> PrivDropError {
-        PrivDropError { repr: ErrorRepr::WithDescription(kind, description) }
+        PrivDropError {
+            repr: ErrorRepr::WithDescription(kind, description),
+        }
     }
 }
