@@ -110,9 +110,10 @@ impl PrivDrop {
                     )
                 };
                 if grent.is_null() {
-                    return Err(PrivDropError::from(
-                        (ErrorKind::SysError, "Group not found"),
-                    ));
+                    return Err(PrivDropError::from((
+                        ErrorKind::SysError,
+                        "Group not found",
+                    )));
                 }
                 unsafe { *grent }.gr_gid
             }
