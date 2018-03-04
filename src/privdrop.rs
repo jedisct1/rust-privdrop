@@ -84,12 +84,10 @@ impl PrivDrop {
         try!(Self::uidcheck());
         let pwent = unsafe {
             libc::getpwnam(
-                try!(CString::new(user).map_err(|_| {
-                    PrivDropError::from((
-                        ErrorKind::SysError,
-                        "Unable to access the system user database",
-                    ))
-                })).as_ptr(),
+                try!(CString::new(user).map_err(|_| PrivDropError::from((
+                    ErrorKind::SysError,
+                    "Unable to access the system user database",
+                )))).as_ptr(),
             )
         };
         if pwent.is_null() {
@@ -101,12 +99,10 @@ impl PrivDrop {
             Some(group) => {
                 let grent = unsafe {
                     libc::getgrnam(
-                        try!(CString::new(group).map_err(|_| {
-                            PrivDropError::from((
-                                ErrorKind::SysError,
-                                "Unable to access the system group database",
-                            ))
-                        })).as_ptr(),
+                        try!(CString::new(group).map_err(|_| PrivDropError::from((
+                            ErrorKind::SysError,
+                            "Unable to access the system group database",
+                        )))).as_ptr(),
                     )
                 };
                 if grent.is_null() {
