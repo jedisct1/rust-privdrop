@@ -1,3 +1,5 @@
+sudo: required
+
 language: rust
 rust:
   - nightly
@@ -7,3 +9,8 @@ rust:
 os:
   - linux
   - osx
+
+script:
+  - sudo mkdir -p /var/empty
+  - sudo chmod 555 /var/empty
+  - sudo $( which cargo ) test --verbose
