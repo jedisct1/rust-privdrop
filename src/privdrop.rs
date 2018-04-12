@@ -10,8 +10,7 @@ use std::path::{Path, PathBuf};
 /// ```
 /// privdrop::PrivDrop::default()
 ///     .chroot("/var/empty")
-///     .user("www-data").unwrap()
-///     .group("nogroup").unwrap()
+///     .user("nobody").unwrap()
 ///     .apply()
 ///     .unwrap_or_else(|e| { panic!("Failed to drop privileges: {}", e) });
 /// ```
