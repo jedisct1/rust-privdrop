@@ -120,12 +120,12 @@ impl PrivDrop {
                     )));
                 }
                 try!(unistd::setgid(gid));
-            },
-            None => ()
+            }
+            None => (),
         }
         match self.uid.take() {
             Some(uid) => try!(unistd::setuid(uid)),
-            None => ()
+            None => (),
         }
         Ok(self)
     }
