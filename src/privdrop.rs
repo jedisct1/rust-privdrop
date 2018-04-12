@@ -77,10 +77,11 @@ impl PrivDrop {
     }
 
     fn preload() -> Result<(), PrivDropError> {
+        let c_locale = CString::new("C").unwrap();
         unsafe {
             libc::strerror(1);
-            libc::setlocale(libc::LC_CTYPE, CString::new("C").unwrap().as_ptr());
-            libc::setlocale(libc::LC_COLLATE, CString::new("C").unwrap().as_ptr());
+            libc::setlocale(libc::LC_CTYPE, c_locale.as_ptr());
+            libc::setlocale(libc::LC_COLLATE, c_locale.as_ptr());
             let mut now: libc::time_t = 0;
             libc::time(&mut now);
             libc::localtime(&now);
@@ -111,21 +112,17 @@ impl PrivDrop {
 
     fn do_idchange(mut self) -> Result<Self, PrivDropError> {
         try!(Self::uidcheck());
-        match self.gid.take() {
-            Some(gid) => {
-                if unsafe { libc::setgroups(1, &gid) } != 0 {
-                    return Err(PrivDropError::from((
-                        ErrorKind::SysError,
-                        "Unable to revoke supplementary groups",
-                    )));
-                }
-                try!(unistd::setgid(gid));
+        if let Some(gid) = self.gid.take() {
+            if unsafe { libc::setgroups(1, &gid) } != 0 {
+                return Err(PrivDropError::from((
+                    ErrorKind::SysError,
+                    "Unable to revoke supplementary groups",
+                )));
             }
-            None => (),
+            try!(unistd::setgid(gid));
         }
-        match self.uid.take() {
-            Some(uid) => try!(unistd::setuid(uid)),
-            None => (),
+        if let Some(uid) = self.uid.take() {
+            try!(unistd::setuid(uid))
         }
         Ok(self)
     }
