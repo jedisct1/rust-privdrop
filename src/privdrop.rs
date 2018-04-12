@@ -33,10 +33,14 @@ impl PrivDrop {
     pub fn user(mut self, user: &str) -> Result<Self, PrivDropError> {
         let pwent = unsafe {
             libc::getpwnam(
-                try!(CString::new(user).map_err(|_| PrivDropError::from((
-                    ErrorKind::SysError,
-                    "Unable to access the system user database",
-                )))).as_ptr(),
+                CString::new(user)
+                    .map_err(|_| {
+                        PrivDropError::from((
+                            ErrorKind::SysError,
+                            "Unable to access the system user database",
+                        ))
+                    })?
+                    .as_ptr(),
             )
         };
         if pwent.is_null() {
@@ -52,10 +56,14 @@ impl PrivDrop {
         self.gid = {
             let grent = unsafe {
                 libc::getgrnam(
-                    try!(CString::new(group).map_err(|_| PrivDropError::from((
-                        ErrorKind::SysError,
-                        "Unable to access the system group database",
-                    )))).as_ptr(),
+                    CString::new(group)
+                        .map_err(|_| {
+                            PrivDropError::from((
+                                ErrorKind::SysError,
+                                "Unable to access the system group database",
+                            ))
+                        })?
+                        .as_ptr(),
                 )
             };
             if grent.is_null() {
@@ -71,8 +79,8 @@ impl PrivDrop {
 
     /// Apply the changes
     pub fn apply(self) -> Result<(), PrivDropError> {
-        try!(Self::preload());
-        try!(try!(self.do_chroot()).do_idchange());
+        Self::preload()?;
+        self.do_chroot()?.do_idchange()?;
         Ok(())
     }
 
@@ -102,16 +110,16 @@ impl PrivDrop {
 
     fn do_chroot(mut self) -> Result<Self, PrivDropError> {
         if let Some(chroot) = self.chroot.take() {
-            try!(Self::uidcheck());
-            try!(unistd::chdir(&chroot));
-            try!(unistd::chroot(&chroot));
-            try!(unistd::chdir("/"))
+            Self::uidcheck()?;
+            unistd::chdir(&chroot)?;
+            unistd::chroot(&chroot)?;
+            unistd::chdir("/")?
         }
         Ok(self)
     }
 
     fn do_idchange(mut self) -> Result<Self, PrivDropError> {
-        try!(Self::uidcheck());
+        Self::uidcheck()?;
         if let Some(gid) = self.gid.take() {
             if unsafe { libc::setgroups(1, &gid) } != 0 {
                 return Err(PrivDropError::from((
@@ -119,10 +127,10 @@ impl PrivDrop {
                     "Unable to revoke supplementary groups",
                 )));
             }
-            try!(unistd::setgid(gid));
+            unistd::setgid(gid)?;
         }
         if let Some(uid) = self.uid.take() {
-            try!(unistd::setuid(uid))
+            unistd::setuid(uid)?
         }
         Ok(self)
     }
