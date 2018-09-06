@@ -10,7 +10,7 @@ fn test_privdrop ()
     use std;
     use std::io::Write;
 
-    if unistd::geteuid() == 0 {
+    if unistd::geteuid().is_root() {
         PrivDrop::default()
             .chroot("/var/empty")
             .user("nobody").unwrap()
@@ -114,7 +114,7 @@ impl PrivDrop {
     }
 
     fn uidcheck() -> Result<(), PrivDropError> {
-        if unistd::geteuid() != 0 {
+        if !unistd::geteuid().is_root() {
             Err(PrivDropError::from((
                 ErrorKind::SysError,
                 "Starting this application requires root privileges",
@@ -143,10 +143,10 @@ impl PrivDrop {
                     "Unable to revoke supplementary groups",
                 )));
             }
-            unistd::setgid(gid)?;
+            unistd::setgid(unistd::Gid::from_raw(gid))?;
         }
         if let Some(uid) = self.uid.take() {
-            unistd::setuid(uid)?
+            unistd::setuid(unistd::Uid::from_raw(uid))?
         }
         Ok(self)
     }
