@@ -1,8 +1,10 @@
-use super::errors::*;
-use libc;
-use nix::unistd;
 use std::ffi::CString;
 use std::path::{Path, PathBuf};
+
+use libc;
+use nix::unistd;
+
+use super::errors::*;
 
 #[test]
 fn test_privdrop() {
