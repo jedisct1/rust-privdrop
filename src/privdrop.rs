@@ -20,7 +20,8 @@ fn test_privdrop() {
         writeln!(
             std::io::stderr(),
             "Test was skipped because it needs to be run as root."
-        ).unwrap();
+        )
+        .unwrap();
     }
 }
 
@@ -58,7 +59,8 @@ impl PrivDrop {
                             ErrorKind::SysError,
                             "Unable to access the system user database",
                         ))
-                    })?.as_ptr(),
+                    })?
+                    .as_ptr(),
             )
         };
         if pwent.is_null() {
@@ -80,7 +82,8 @@ impl PrivDrop {
                                 ErrorKind::SysError,
                                 "Unable to access the system group database",
                             ))
-                        })?.as_ptr(),
+                        })?
+                        .as_ptr(),
                 )
             };
             if grent.is_null() {

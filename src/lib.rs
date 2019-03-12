@@ -1,6 +1,3 @@
-extern crate libc;
-extern crate nix;
-
 mod errors;
 mod privdrop;
 

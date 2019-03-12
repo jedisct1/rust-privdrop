@@ -26,16 +26,16 @@ impl Error for PrivDropError {
         }
     }
 
-    fn cause(&self) -> Option<&Error> {
+    fn cause(&self) -> Option<&dyn Error> {
         match self.repr {
-            ErrorRepr::FromNix(ref e) => Some(e as &Error),
+            ErrorRepr::FromNix(ref e) => Some(e as &dyn Error),
             _ => None,
         }
     }
 }
 
 impl fmt::Display for PrivDropError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         match self.repr {
             ErrorRepr::FromNix(ref e) => e.fmt(f),
             ErrorRepr::WithDescription(_, description) => description.fmt(f),
