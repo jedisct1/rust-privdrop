@@ -22,7 +22,8 @@ fn test_privdrop() {
         writeln!(
             std::io::stderr(),
             "Test was skipped because it needs to be run as root."
-        ).unwrap();
+        )
+        .unwrap();
     }
 }
 
@@ -111,41 +112,49 @@ impl PrivDrop {
     }
 
     fn lookup_user(user: &OsStr) -> Result<(libc::uid_t, libc::gid_t), PrivDropError> {
-        let pwent = unsafe {
-            libc::getpwnam(
-                CString::new(user.as_bytes())
-                    .map_err(|_| {
-                        PrivDropError::from((
-                            ErrorKind::SysError,
-                            "Unable to access the system user database",
-                        ))
-                    })?.as_ptr(),
+        let username = CString::new(user.as_bytes())
+            .map_err(|_| PrivDropError::from((ErrorKind::SysError, "Invalid username")))?;
+        let mut pwd = unsafe { std::mem::zeroed::<libc::passwd>() };
+        let mut pwbuf = vec![0; 4096];
+        let mut pwent = std::ptr::null_mut::<libc::passwd>();
+        let ret = unsafe {
+            libc::getpwnam_r(
+                username.as_ptr(),
+                &mut pwd,
+                pwbuf.as_mut_ptr(),
+                pwbuf.len(),
+                &mut pwent,
             )
         };
-        if pwent.is_null() {
+
+        if ret != 0 || pwent.is_null() {
             return Err(PrivDropError::from((ErrorKind::SysError, "User not found")));
         }
+
         Ok(unsafe { ((*pwent).pw_uid, (*pwent).pw_gid) })
     }
 
     fn lookup_group(group: &OsStr) -> Result<libc::gid_t, PrivDropError> {
-        let grent = unsafe {
-            libc::getgrnam(
-                CString::new(group.as_bytes())
-                    .map_err(|_| {
-                        PrivDropError::from((
-                            ErrorKind::SysError,
-                            "Unable to access the system group database",
-                        ))
-                    })?.as_ptr(),
+        let groupname = CString::new(group.as_bytes())
+            .map_err(|_| PrivDropError::from((ErrorKind::SysError, "Invalid group name")))?;
+
+        let mut grp = unsafe { std::mem::zeroed::<libc::group>() };
+        let mut grbuf = vec![0; 4096];
+        let mut grent = std::ptr::null_mut::<libc::group>();
+        let ret = unsafe {
+            libc::getgrnam_r(
+                groupname.as_ptr(),
+                &mut grp,
+                grbuf.as_mut_ptr(),
+                grbuf.len(),
+                &mut grent,
             )
         };
-        if grent.is_null() {
-            return Err(PrivDropError::from((
-                ErrorKind::SysError,
-                "Group not found",
-            )));
+
+        if ret != 0 || grent.is_null() {
+            return Err(PrivDropError::from((ErrorKind::SysError, "Group not found")));
         }
+
         Ok(unsafe { *grent }.gr_gid)
     }
 
