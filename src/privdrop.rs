@@ -1,4 +1,4 @@
-use std::ffi::{CString, OsStr};
+use std::ffi::{CString, OsStr, OsString};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
@@ -16,7 +16,6 @@ fn test_privdrop() {
         PrivDrop::default()
             .chroot("/var/empty")
             .user("nobody")
-            .unwrap()
             .apply()
             .unwrap_or_else(|e| panic!("Failed to drop privileges: {}", e));
     } else {
@@ -33,13 +32,19 @@ fn test_privdrop() {
 /// ```ignore
 /// privdrop::PrivDrop::default()
 ///     .chroot("/var/empty")
-///     .user("nobody").unwrap()
+///     .user("nobody")
 ///     .apply()
 ///     .unwrap_or_else(|e| { panic!("Failed to drop privileges: {}", e) });
 /// ```
 #[derive(Default, Clone, Debug)]
 pub struct PrivDrop {
     chroot: Option<PathBuf>,
+    user: Option<OsString>,
+    group: Option<OsString>,
+}
+
+#[derive(Default, Clone, Debug)]
+struct UidGid {
     uid: Option<libc::uid_t>,
     gid: Option<libc::gid_t>,
 }
@@ -52,55 +57,22 @@ impl PrivDrop {
     }
 
     /// Set the name of a user to switch to
-    pub fn user<S: AsRef<OsStr>>(mut self, user: S) -> Result<Self, PrivDropError> {
-        let pwent = unsafe {
-            libc::getpwnam(
-                CString::new(user.as_ref().as_bytes())
-                    .map_err(|_| {
-                        PrivDropError::from((
-                            ErrorKind::SysError,
-                            "Unable to access the system user database",
-                        ))
-                    })?.as_ptr(),
-            )
-        };
-        if pwent.is_null() {
-            return Err(PrivDropError::from((ErrorKind::SysError, "User not found")));
-        }
-        self.uid = Some(unsafe { *pwent }.pw_uid);
-        self.gid = Some(unsafe { *pwent }.pw_gid);
-        Ok(self)
+    pub fn user<S: AsRef<OsStr>>(mut self, user: S) -> Self {
+        self.user = Some(user.as_ref().to_owned());
+        self
     }
 
     /// Set a group name to switch to, if different from the primary group of the user
-    pub fn group<S: AsRef<OsStr>>(mut self, group: S) -> Result<Self, PrivDropError> {
-        self.gid = {
-            let grent = unsafe {
-                libc::getgrnam(
-                    CString::new(group.as_ref().as_bytes())
-                        .map_err(|_| {
-                            PrivDropError::from((
-                                ErrorKind::SysError,
-                                "Unable to access the system group database",
-                            ))
-                        })?.as_ptr(),
-                )
-            };
-            if grent.is_null() {
-                return Err(PrivDropError::from((
-                    ErrorKind::SysError,
-                    "Group not found",
-                )));
-            }
-            Some(unsafe { *grent }.gr_gid)
-        };
-        Ok(self)
+    pub fn group<S: AsRef<OsStr>>(mut self, group: S) -> Self {
+        self.group = Some(group.as_ref().to_owned());
+        self
     }
 
     /// Apply the changes
     pub fn apply(self) -> Result<(), PrivDropError> {
         Self::preload()?;
-        self.do_chroot()?.do_idchange()?;
+        let ids = self.lookup_ids()?;
+        self.do_chroot()?.do_idchange(ids)?;
         Ok(())
     }
 
@@ -138,9 +110,65 @@ impl PrivDrop {
         Ok(self)
     }
 
-    fn do_idchange(mut self) -> Result<Self, PrivDropError> {
+    fn lookup_user(user: &OsStr) -> Result<(libc::uid_t, libc::gid_t), PrivDropError> {
+        let pwent = unsafe {
+            libc::getpwnam(
+                CString::new(user.as_bytes())
+                    .map_err(|_| {
+                        PrivDropError::from((
+                            ErrorKind::SysError,
+                            "Unable to access the system user database",
+                        ))
+                    })?.as_ptr(),
+            )
+        };
+        if pwent.is_null() {
+            return Err(PrivDropError::from((ErrorKind::SysError, "User not found")));
+        }
+        Ok(unsafe { ((*pwent).pw_uid, (*pwent).pw_gid) })
+    }
+
+    fn lookup_group(group: &OsStr) -> Result<libc::gid_t, PrivDropError> {
+        let grent = unsafe {
+            libc::getgrnam(
+                CString::new(group.as_bytes())
+                    .map_err(|_| {
+                        PrivDropError::from((
+                            ErrorKind::SysError,
+                            "Unable to access the system group database",
+                        ))
+                    })?.as_ptr(),
+            )
+        };
+        if grent.is_null() {
+            return Err(PrivDropError::from((
+                ErrorKind::SysError,
+                "Group not found",
+            )));
+        }
+        Ok(unsafe { *grent }.gr_gid)
+    }
+
+    fn lookup_ids(&self) -> Result<UidGid, PrivDropError> {
+        let mut ids = UidGid::default();
+
+        if let Some(ref user) = self.user {
+            let pair = PrivDrop::lookup_user(user)?;
+            ids.uid = Some(pair.0);
+            ids.gid = Some(pair.1);
+        }
+
+        if let Some(ref group) = self.group {
+            ids.gid = Some(PrivDrop::lookup_group(group)?);
+        }
+
+        Ok(ids)
+    }
+
+    fn do_idchange(&self, ids: UidGid) -> Result<(), PrivDropError> {
         Self::uidcheck()?;
-        if let Some(gid) = self.gid.take() {
+
+        if let Some(gid) = ids.gid {
             if unsafe { libc::setgroups(1, &gid) } != 0 {
                 return Err(PrivDropError::from((
                     ErrorKind::SysError,
@@ -149,9 +177,9 @@ impl PrivDrop {
             }
             unistd::setgid(unistd::Gid::from_raw(gid))?;
         }
-        if let Some(uid) = self.uid.take() {
+        if let Some(uid) = ids.uid {
             unistd::setuid(unistd::Uid::from_raw(uid))?
         }
-        Ok(self)
+        Ok(())
     }
 }
