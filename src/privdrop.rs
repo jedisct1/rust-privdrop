@@ -1,4 +1,5 @@
-use std::ffi::CString;
+use std::ffi::{CString, OsStr};
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
 use libc;
@@ -51,10 +52,10 @@ impl PrivDrop {
     }
 
     /// Set the name of a user to switch to
-    pub fn user(mut self, user: &str) -> Result<Self, PrivDropError> {
+    pub fn user<S: AsRef<OsStr>>(mut self, user: S) -> Result<Self, PrivDropError> {
         let pwent = unsafe {
             libc::getpwnam(
-                CString::new(user)
+                CString::new(user.as_ref().as_bytes())
                     .map_err(|_| {
                         PrivDropError::from((
                             ErrorKind::SysError,
@@ -72,11 +73,11 @@ impl PrivDrop {
     }
 
     /// Set a group name to switch to, if different from the primary group of the user
-    pub fn group(mut self, group: &str) -> Result<Self, PrivDropError> {
+    pub fn group<S: AsRef<OsStr>>(mut self, group: S) -> Result<Self, PrivDropError> {
         self.gid = {
             let grent = unsafe {
                 libc::getgrnam(
-                    CString::new(group)
+                    CString::new(group.as_ref().as_bytes())
                         .map_err(|_| {
                             PrivDropError::from((
                                 ErrorKind::SysError,
