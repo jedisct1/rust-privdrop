@@ -78,7 +78,6 @@ impl PrivDrop {
 
     /// Apply the changes
     pub fn apply(self) -> Result<(), PrivDropError> {
-        Self::preload()?;
         let ids = self.lookup_ids()?;
         self.do_chroot()?.do_idchange(ids)?;
         Ok(())
@@ -111,6 +110,7 @@ impl PrivDrop {
     fn do_chroot(mut self) -> Result<Self, PrivDropError> {
         if let Some(chroot) = self.chroot.take() {
             Self::uidcheck()?;
+            Self::preload()?;
             unistd::chdir(&chroot)?;
             unistd::chroot(&chroot)?;
             unistd::chdir("/")?
