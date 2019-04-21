@@ -8,6 +8,13 @@ use nix::unistd;
 use super::errors::*;
 
 #[test]
+fn test_default_privdrop() {
+    PrivDrop::default()
+        .apply()
+        .expect("A default PrivDrop should always succeed");
+}
+
+#[test]
 fn test_privdrop() {
     use std;
     use std::io::Write;
@@ -175,7 +182,9 @@ impl PrivDrop {
     }
 
     fn do_idchange(&self, ids: UidGid) -> Result<(), PrivDropError> {
-        Self::uidcheck()?;
+        if ids.gid.is_some() || ids.uid.is_some() {
+            Self::uidcheck()?;
+        }
 
         if let Some(gid) = ids.gid {
             if unsafe { libc::setgroups(1, &gid) } != 0 {
