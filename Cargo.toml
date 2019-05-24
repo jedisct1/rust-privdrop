@@ -1,6 +1,6 @@
 [package]
 name = "privdrop"
-version = "0.3.1"
+version = "0.3.2"
 description = "A simple crate to drop privileges"
 authors = ["Frank Denis <github@pureftpd.org>"]
 keywords = ["privileges", "drop"]
