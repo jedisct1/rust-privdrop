@@ -13,5 +13,5 @@ categories = ["os::unix-apis"]
 travis-ci = { repository = "jedisct1/rust-privdrop" }
 
 [dependencies]
-libc = "~0.2"
-nix = "~0.14"
+libc = "0.2.62"
+nix = "0.15"
