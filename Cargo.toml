@@ -1,6 +1,6 @@
 [package]
 name = "privdrop"
-version = "0.3.3"
+version = "0.3.4"
 description = "A simple crate to drop privileges"
 authors = ["Frank Denis <github@pureftpd.org>"]
 keywords = ["privileges", "drop"]
@@ -13,5 +13,5 @@ categories = ["os::unix-apis"]
 travis-ci = { repository = "jedisct1/rust-privdrop" }
 
 [dependencies]
-libc = "0.2.62"
-nix = "0.15"
+libc = "0.2"
+nix = "0.16"
