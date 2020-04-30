@@ -19,13 +19,6 @@ pub struct PrivDropError {
 }
 
 impl Error for PrivDropError {
-    fn description(&self) -> &str {
-        match self.repr {
-            ErrorRepr::FromNix(ref e) => e.description(),
-            ErrorRepr::WithDescription(_, description) => description,
-        }
-    }
-
     fn cause(&self) -> Option<&dyn Error> {
         match self.repr {
             ErrorRepr::FromNix(ref e) => Some(e as &dyn Error),
