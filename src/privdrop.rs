@@ -9,9 +9,6 @@ use super::errors::*;
 
 #[test]
 fn test_privdrop() {
-    use std;
-    use std::io::Write;
-
     if unistd::geteuid().is_root() {
         PrivDrop::default()
             .chroot("/var/empty")
@@ -19,11 +16,7 @@ fn test_privdrop() {
             .apply()
             .unwrap_or_else(|e| panic!("Failed to drop privileges: {}", e));
     } else {
-        writeln!(
-            std::io::stderr(),
-            "Test was skipped because it needs to be run as root."
-        )
-        .unwrap();
+        eprintln!("Test was skipped because it needs to be run as root.");
     }
 }
 
