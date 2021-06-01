@@ -2,7 +2,6 @@ use std::ffi::{CString, OsStr, OsString};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
-use libc;
 use nix::unistd;
 
 use super::errors::*;
