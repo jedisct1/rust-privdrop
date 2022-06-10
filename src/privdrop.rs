@@ -34,12 +34,15 @@ pub struct PrivDrop {
     chroot: Option<PathBuf>,
     user: Option<OsString>,
     group: Option<OsString>,
+    group_list: Option<Vec<OsString>>,
+    include_default_supplementary_groups: bool,
 }
 
 #[derive(Default, Clone, Debug)]
-struct UidGid {
+struct UserIds {
     uid: Option<libc::uid_t>,
     gid: Option<libc::gid_t>,
+    group_list: Option<Vec<libc::gid_t>>,
 }
 
 impl PrivDrop {
@@ -58,6 +61,18 @@ impl PrivDrop {
     /// Set a group name to switch to, if different from the primary group of the user
     pub fn group<S: AsRef<OsStr>>(mut self, group: S) -> Self {
         self.group = Some(group.as_ref().to_owned());
+        self
+    }
+
+    /// Include default supplementary groups
+    pub fn include_default_supplementary_groups(mut self) -> Self {
+        self.include_default_supplementary_groups = true;
+        self
+    }
+
+    /// Set the full list of groups to switch to
+    pub fn group_list<S: AsRef<OsStr>>(mut self, group_list: &[S]) -> Self {
+        self.group_list = Some(group_list.iter().map(|x| x.as_ref().to_owned()).collect());
         self
     }
 
@@ -103,7 +118,7 @@ impl PrivDrop {
         Ok(self)
     }
 
-    fn lookup_user(user: &OsStr) -> Result<(libc::uid_t, libc::gid_t), PrivDropError> {
+    fn lookup_user(user: &OsStr) -> Result<UserIds, PrivDropError> {
         let username = CString::new(user.as_bytes())
             .map_err(|_| PrivDropError::from((ErrorKind::SysError, "Invalid username")))?;
         let mut pwd = unsafe { std::mem::zeroed::<libc::passwd>() };
@@ -123,7 +138,41 @@ impl PrivDrop {
             return Err(PrivDropError::from((ErrorKind::SysError, "User not found")));
         }
 
-        Ok(unsafe { ((*pwent).pw_uid, (*pwent).pw_gid) })
+        let uid = unsafe { *pwent }.pw_uid;
+        let gid = unsafe { *pwent }.pw_gid;
+
+        Ok(UserIds {
+            uid: Some(uid),
+            gid: Some(gid),
+            group_list: None,
+        })
+    }
+
+    fn default_group_list(
+        user: &OsStr,
+        gid: libc::gid_t,
+    ) -> Result<Option<Vec<libc::gid_t>>, PrivDropError> {
+        let username = CString::new(user.as_bytes())
+            .map_err(|_| PrivDropError::from((ErrorKind::SysError, "Invalid username")))?;
+        let mut groups = vec![0; 256];
+        let mut ngroups = groups.len() as _;
+        let ret = unsafe {
+            libc::getgrouplist(
+                username.as_ptr(),
+                gid as _,
+                groups.as_mut_ptr(),
+                &mut ngroups,
+            )
+        };
+        if ret == -1 {
+            return Ok(None);
+        }
+        groups.truncate(ngroups as _);
+        let mut groups_ = Vec::with_capacity(groups.len());
+        for group in groups {
+            groups_.push(group as _);
+        }
+        Ok(Some(groups_))
     }
 
     fn lookup_group(group: &OsStr) -> Result<libc::gid_t, PrivDropError> {
@@ -153,27 +202,56 @@ impl PrivDrop {
         Ok(unsafe { *grent }.gr_gid)
     }
 
-    fn lookup_ids(&self) -> Result<UidGid, PrivDropError> {
-        let mut ids = UidGid::default();
+    fn lookup_ids(&self) -> Result<UserIds, PrivDropError> {
+        let mut ids = UserIds::default();
 
         if let Some(ref user) = self.user {
-            let pair = PrivDrop::lookup_user(user)?;
-            ids.uid = Some(pair.0);
-            ids.gid = Some(pair.1);
+            ids = PrivDrop::lookup_user(user)?;
         }
 
         if let Some(ref group) = self.group {
             ids.gid = Some(PrivDrop::lookup_group(group)?);
         }
 
+        if let Some(ref group_list) = self.group_list {
+            let mut groups = Vec::with_capacity(group_list.len());
+            for group in group_list {
+                groups.push(PrivDrop::lookup_group(group)?);
+            }
+            ids.group_list = Some(groups);
+        }
+
         Ok(ids)
     }
 
-    fn do_idchange(&self, ids: UidGid) -> Result<(), PrivDropError> {
+    fn do_idchange(&self, ids: UserIds) -> Result<(), PrivDropError> {
         Self::uidcheck()?;
 
+        let mut groups = vec![];
+        if self.include_default_supplementary_groups {
+            if let (Some(user), Some(gid)) = (&self.user, ids.gid) {
+                if let Some(group_list) = Self::default_group_list(user, gid)? {
+                    groups.extend(group_list);
+                }
+            } else {
+                return Err(PrivDropError::from((
+                    ErrorKind::SysError,
+                    "Unable to determine default supplementary groups without a user name and a base gid",
+                )));
+            }
+        }
+        if let Some(ref group_list) = ids.group_list {
+            groups.extend(group_list.iter().cloned());
+        }
         if let Some(gid) = ids.gid {
-            if unsafe { libc::setgroups(1, &gid) } != 0 {
+            groups.push(gid);
+            let mut unique_groups = vec![];
+            for group in groups {
+                if !unique_groups.contains(&group) {
+                    unique_groups.push(group);
+                }
+            }
+            if unsafe { libc::setgroups(unique_groups.len() as _, unique_groups.as_ptr()) } != 0 {
                 return Err(PrivDropError::from((
                     ErrorKind::SysError,
                     "Unable to revoke supplementary groups",
