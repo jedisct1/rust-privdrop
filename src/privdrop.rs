@@ -40,6 +40,7 @@ pub struct PrivDrop {
 struct UidGid {
     uid: Option<libc::uid_t>,
     gid: Option<libc::gid_t>,
+    supplementary: Vec<unistd::Gid>,
 }
 
 impl PrivDrop {
@@ -160,6 +161,11 @@ impl PrivDrop {
             let pair = PrivDrop::lookup_user(user)?;
             ids.uid = Some(pair.0);
             ids.gid = Some(pair.1);
+
+            let user = CString::new(user.as_bytes()).map_err(|_| {
+                PrivDropError::from((ErrorKind::SysError, "could not get cstring from username"))
+            })?;
+            ids.supplementary = unistd::getgrouplist(&user, unistd::Gid::from_raw(pair.1))?;
         }
 
         if let Some(ref group) = self.group {
@@ -173,7 +179,7 @@ impl PrivDrop {
         Self::uidcheck()?;
 
         if let Some(gid) = ids.gid {
-            if unsafe { libc::setgroups(1, &gid) } != 0 {
+            if let Err(_) = unistd::setgroups(&ids.supplementary) {
                 return Err(PrivDropError::from((
                     ErrorKind::SysError,
                     "Unable to revoke supplementary groups",
