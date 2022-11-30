@@ -15,4 +15,4 @@ travis-ci = { repository = "jedisct1/rust-privdrop" }
 
 [dependencies]
 libc = "0.2"
-nix = "0.24"
+nix = "0.26"
