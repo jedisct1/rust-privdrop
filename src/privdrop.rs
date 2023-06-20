@@ -36,6 +36,7 @@ pub struct PrivDrop {
     group: Option<OsString>,
     group_list: Option<Vec<OsString>>,
     include_default_supplementary_groups: bool,
+    fallback_to_ids_if_names_are_numeric: bool,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -67,6 +68,12 @@ impl PrivDrop {
     /// Include default supplementary groups
     pub fn include_default_supplementary_groups(mut self) -> Self {
         self.include_default_supplementary_groups = true;
+        self
+    }
+
+    /// If a name is not found, try to parse it as a numeric identifier
+    pub fn fallback_to_ids_if_names_are_numeric(mut self) -> Self {
+        self.fallback_to_ids_if_names_are_numeric = true;
         self
     }
 
@@ -118,7 +125,10 @@ impl PrivDrop {
         Ok(self)
     }
 
-    fn lookup_user(user: &OsStr) -> Result<UserIds, PrivDropError> {
+    fn lookup_user(
+        user: &OsStr,
+        fallback_to_ids_if_names_are_numeric: bool,
+    ) -> Result<UserIds, PrivDropError> {
         let username = CString::new(user.as_bytes())
             .map_err(|_| PrivDropError::from((ErrorKind::SysError, "Invalid username")))?;
         let mut pwd = unsafe { std::mem::zeroed::<libc::passwd>() };
@@ -135,7 +145,26 @@ impl PrivDrop {
         };
 
         if ret != 0 || pwent.is_null() {
-            return Err(PrivDropError::from((ErrorKind::SysError, "User not found")));
+            if !fallback_to_ids_if_names_are_numeric {
+                return Err(PrivDropError::from((ErrorKind::SysError, "User not found")));
+            }
+            let user_str = user.to_str().ok_or_else(|| {
+                PrivDropError::from((
+                    ErrorKind::SysError,
+                    "User not found and username is not a valid number",
+                ))
+            })?;
+            let uid = user_str.parse().map_err(|_| {
+                PrivDropError::from((
+                    ErrorKind::SysError,
+                    "User not found and username is not a valid number",
+                ))
+            })?;
+            return Ok(UserIds {
+                uid: Some(uid),
+                gid: None,
+                group_list: None,
+            });
         }
 
         let uid = unsafe { *pwent }.pw_uid;
@@ -175,7 +204,10 @@ impl PrivDrop {
         Ok(Some(groups_))
     }
 
-    fn lookup_group(group: &OsStr) -> Result<libc::gid_t, PrivDropError> {
+    fn lookup_group(
+        group: &OsStr,
+        fallback_to_ids_if_names_are_numeric: bool,
+    ) -> Result<libc::gid_t, PrivDropError> {
         let groupname = CString::new(group.as_bytes())
             .map_err(|_| PrivDropError::from((ErrorKind::SysError, "Invalid group name")))?;
 
@@ -193,10 +225,25 @@ impl PrivDrop {
         };
 
         if ret != 0 || grent.is_null() {
-            return Err(PrivDropError::from((
-                ErrorKind::SysError,
-                "Group not found",
-            )));
+            if !fallback_to_ids_if_names_are_numeric {
+                return Err(PrivDropError::from((
+                    ErrorKind::SysError,
+                    "Group not found",
+                )));
+            }
+            let group_str = group.to_str().ok_or_else(|| {
+                PrivDropError::from((
+                    ErrorKind::SysError,
+                    "Group not found and group is not a valid number",
+                ))
+            })?;
+            let gid: libc::gid_t = group_str.parse().map_err(|_| {
+                PrivDropError::from((
+                    ErrorKind::SysError,
+                    "Group not found and group is not a valid number",
+                ))
+            })?;
+            return Ok(gid);
         }
 
         Ok(unsafe { *grent }.gr_gid)
@@ -206,17 +253,23 @@ impl PrivDrop {
         let mut ids = UserIds::default();
 
         if let Some(ref user) = self.user {
-            ids = PrivDrop::lookup_user(user)?;
+            ids = PrivDrop::lookup_user(user, self.fallback_to_ids_if_names_are_numeric)?;
         }
 
         if let Some(ref group) = self.group {
-            ids.gid = Some(PrivDrop::lookup_group(group)?);
+            ids.gid = Some(PrivDrop::lookup_group(
+                group,
+                self.fallback_to_ids_if_names_are_numeric,
+            )?);
         }
 
         if let Some(ref group_list) = self.group_list {
             let mut groups = Vec::with_capacity(group_list.len());
             for group in group_list {
-                groups.push(PrivDrop::lookup_group(group)?);
+                groups.push(PrivDrop::lookup_group(
+                    group,
+                    self.fallback_to_ids_if_names_are_numeric,
+                )?);
             }
             ids.group_list = Some(groups);
         }
