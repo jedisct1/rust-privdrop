@@ -10,9 +10,6 @@ repository = "https://github.com/jedisct1/rust-privdrop"
 categories = ["os::unix-apis"]
 edition = "2018"
 
-[badges]
-travis-ci = { repository = "jedisct1/rust-privdrop" }
-
 [dependencies]
 libc = "0.2"
 nix = { version = "0.28", features = ["user", "fs"] }
