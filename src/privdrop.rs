@@ -6,6 +6,9 @@ use nix::unistd;
 
 use super::errors::*;
 
+const INITIAL_BUFFER_SIZE: usize = 4096;
+const MAX_GROUPS: usize = 256;
+
 #[test]
 fn test_privdrop() {
     if unistd::geteuid().is_root() {
@@ -19,7 +22,14 @@ fn test_privdrop() {
     }
 }
 
-/// `PrivDrop` structure
+/// `PrivDrop` structure for securely dropping privileges in Unix systems.
+///
+/// This structure provides a builder pattern interface for configuring and
+/// executing privilege dropping operations. It allows:
+/// - Changing the root directory (chroot)
+/// - Switching to a non-root user
+/// - Setting group memberships
+/// - Managing supplementary groups
 ///
 /// # Example
 /// ```ignore
@@ -29,6 +39,10 @@ fn test_privdrop() {
 ///     .apply()
 ///     .unwrap_or_else(|e| { panic!("Failed to drop privileges: {}", e) });
 /// ```
+///
+/// # Safety
+/// This structure handles privileged operations and should be used with care.
+/// All operations are performed atomically during the `apply()` call.
 #[derive(Default, Clone, Debug)]
 pub struct PrivDrop {
     chroot: Option<PathBuf>,
@@ -47,43 +61,67 @@ struct UserIds {
 }
 
 impl PrivDrop {
-    /// chroot() to a specific directory before switching to a non-root user
+    /// Sets the directory to chroot into before switching to a non-root user.
+    ///
+    /// # Arguments
+    /// * `path` - The path to use as the new root directory
     pub fn chroot<T: AsRef<Path>>(mut self, path: T) -> Self {
         self.chroot = Some(path.as_ref().to_owned());
         self
     }
 
-    /// Set the name of a user to switch to
+    /// Sets the name of the user to switch to.
+    ///
+    /// # Arguments
+    /// * `user` - The username to switch to
     pub fn user<S: AsRef<OsStr>>(mut self, user: S) -> Self {
         self.user = Some(user.as_ref().to_owned());
         self
     }
 
-    /// Set a group name to switch to, if different from the primary group of the user
+    /// Sets a group name to switch to, if different from the user's primary group.
+    ///
+    /// # Arguments
+    /// * `group` - The group name to switch to
     pub fn group<S: AsRef<OsStr>>(mut self, group: S) -> Self {
         self.group = Some(group.as_ref().to_owned());
         self
     }
 
-    /// Include default supplementary groups
+    /// Includes the user's default supplementary groups in addition to specified groups.
     pub fn include_default_supplementary_groups(mut self) -> Self {
         self.include_default_supplementary_groups = true;
         self
     }
 
-    /// If a name is not found, try to parse it as a numeric identifier
+    /// Enables fallback to numeric IDs if names cannot be resolved.
+    ///
+    /// When enabled, if a username or group name lookup fails, the system will
+    /// attempt to interpret the name as a numeric ID.
     pub fn fallback_to_ids_if_names_are_numeric(mut self) -> Self {
         self.fallback_to_ids_if_names_are_numeric = true;
         self
     }
 
-    /// Set the full list of groups to switch to
+    /// Sets the complete list of groups to switch to.
+    ///
+    /// # Arguments
+    /// * `group_list` - List of group names to switch to
     pub fn group_list<S: AsRef<OsStr>>(mut self, group_list: &[S]) -> Self {
         self.group_list = Some(group_list.iter().map(|x| x.as_ref().to_owned()).collect());
         self
     }
 
-    /// Apply the changes
+    /// Applies the configured privilege changes.
+    ///
+    /// This method must be called with root privileges. It will:
+    /// 1. Preload necessary system resources
+    /// 2. Look up all required user and group IDs
+    /// 3. Perform chroot if configured
+    /// 4. Change to the specified user and group IDs
+    ///
+    /// # Errors
+    /// Returns `PrivDropError` if any operation fails
     pub fn apply(self) -> Result<(), PrivDropError> {
         Self::preload()?;
         let ids = self.lookup_ids()?;
@@ -92,11 +130,18 @@ impl PrivDrop {
     }
 
     fn preload() -> Result<(), PrivDropError> {
-        let c_locale = CString::new("C").unwrap();
+        // Preload system resources to prevent deadlocks after privilege drop
+        let c_locale = CString::new("C").map_err(|_| {
+            PrivDropError::from((ErrorKind::SysError, "Failed to create C locale string"))
+        })?;
+
         unsafe {
+            // Preload error strings
             libc::strerror(1);
+            // Preload locale data
             libc::setlocale(libc::LC_CTYPE, c_locale.as_ptr());
             libc::setlocale(libc::LC_COLLATE, c_locale.as_ptr());
+            // Preload time zone data
             let mut now: libc::time_t = 0;
             libc::time(&mut now);
             libc::localtime(&now);
@@ -106,21 +151,34 @@ impl PrivDrop {
 
     fn uidcheck() -> Result<(), PrivDropError> {
         if !unistd::geteuid().is_root() {
-            Err(PrivDropError::from((
+            return Err(PrivDropError::from((
                 ErrorKind::SysError,
                 "Starting this application requires root privileges",
-            )))
-        } else {
-            Ok(())
+            )));
         }
+        Ok(())
     }
 
     fn do_chroot(mut self) -> Result<Self, PrivDropError> {
         if let Some(chroot) = self.chroot.take() {
             Self::uidcheck()?;
-            unistd::chdir(&chroot)?;
-            unistd::chroot(&chroot)?;
-            unistd::chdir("/")?
+            // Change to the new root directory before calling chroot
+            unistd::chdir(&chroot).map_err(|_e| {
+                PrivDropError::from((ErrorKind::SysError, "Failed to change to chroot directory"))
+            })?;
+
+            // Perform the chroot operation
+            unistd::chroot(&chroot).map_err(|_e| {
+                PrivDropError::from((ErrorKind::SysError, "Failed to change root directory"))
+            })?;
+
+            // Change to root directory inside the chroot
+            unistd::chdir("/").map_err(|_e| {
+                PrivDropError::from((
+                    ErrorKind::SysError,
+                    "Failed to change to root directory after chroot",
+                ))
+            })?;
         }
         Ok(self)
     }
@@ -131,9 +189,11 @@ impl PrivDrop {
     ) -> Result<UserIds, PrivDropError> {
         let username = CString::new(user.as_bytes())
             .map_err(|_| PrivDropError::from((ErrorKind::SysError, "Invalid username")))?;
+
         let mut pwd = unsafe { std::mem::zeroed::<libc::passwd>() };
-        let mut pwbuf = vec![0; 4096];
+        let mut pwbuf = vec![0; INITIAL_BUFFER_SIZE];
         let mut pwent = std::ptr::null_mut::<libc::passwd>();
+
         let ret = unsafe {
             libc::getpwnam_r(
                 username.as_ptr(),
@@ -148,18 +208,22 @@ impl PrivDrop {
             if !fallback_to_ids_if_names_are_numeric {
                 return Err(PrivDropError::from((ErrorKind::SysError, "User not found")));
             }
+
+            // Try to parse the username as a numeric UID
             let user_str = user.to_str().ok_or_else(|| {
                 PrivDropError::from((
                     ErrorKind::SysError,
-                    "User not found and username is not a valid number",
+                    "User not found and username is not valid UTF-8",
                 ))
             })?;
+
             let uid = user_str.parse().map_err(|_| {
                 PrivDropError::from((
                     ErrorKind::SysError,
-                    "User not found and username is not a valid number",
+                    "User not found and username is not a valid numeric ID",
                 ))
             })?;
+
             return Ok(UserIds {
                 uid: Some(uid),
                 gid: None,
@@ -183,8 +247,10 @@ impl PrivDrop {
     ) -> Result<Option<Vec<libc::gid_t>>, PrivDropError> {
         let username = CString::new(user.as_bytes())
             .map_err(|_| PrivDropError::from((ErrorKind::SysError, "Invalid username")))?;
-        let mut groups = vec![0; 256];
+
+        let mut groups = vec![0; MAX_GROUPS];
         let mut ngroups = groups.len() as _;
+
         let ret = unsafe {
             libc::getgrouplist(
                 username.as_ptr(),
@@ -193,15 +259,13 @@ impl PrivDrop {
                 &mut ngroups,
             )
         };
+
         if ret == -1 {
             return Ok(None);
         }
+
         groups.truncate(ngroups as _);
-        let mut groups_ = Vec::with_capacity(groups.len());
-        for group in groups {
-            groups_.push(group as _);
-        }
-        Ok(Some(groups_))
+        Ok(Some(groups.into_iter().map(|g| g as libc::gid_t).collect()))
     }
 
     fn lookup_group(
