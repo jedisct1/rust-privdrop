@@ -12,4 +12,4 @@ edition = "2018"
 
 [dependencies]
 libc = "0.2"
-nix = { version = "0.28", features = ["user", "fs"] }
+nix = { version = "0.30", features = ["user", "fs"] }
