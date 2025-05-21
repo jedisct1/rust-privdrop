@@ -11,5 +11,5 @@ categories = ["os::unix-apis"]
 edition = "2018"
 
 [dependencies]
-libc = "0.2"
-nix = { version = "0.28", features = ["user", "fs"] }
+libc = "0.2.172"
+nix = { version = "0.30.1", features = ["user", "fs"] }
