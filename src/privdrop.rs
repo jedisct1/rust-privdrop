@@ -1,4 +1,6 @@
+use std::collections::HashSet;
 use std::ffi::{CString, OsStr, OsString};
+use std::mem::MaybeUninit;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
@@ -9,16 +11,22 @@ use super::errors::*;
 const INITIAL_BUFFER_SIZE: usize = 4096;
 const MAX_GROUPS: usize = 256;
 
-#[test]
-fn test_privdrop() {
-    if unistd::geteuid().is_root() {
-        PrivDrop::default()
-            .chroot("/var/empty")
-            .user("nobody")
-            .apply()
-            .unwrap_or_else(|e| panic!("Failed to drop privileges: {}", e));
-    } else {
-        eprintln!("Test was skipped because it needs to be run as root.");
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nix::unistd;
+
+    #[test]
+    fn test_privdrop() {
+        if unistd::geteuid().is_root() {
+            PrivDrop::default()
+                .chroot("/var/empty")
+                .user("nobody")
+                .apply()
+                .unwrap_or_else(|e| panic!("Failed to drop privileges: {}", e));
+        } else {
+            eprintln!("Test was skipped because it needs to be run as root.");
+        }
     }
 }
 
@@ -190,14 +198,14 @@ impl PrivDrop {
         let username = CString::new(user.as_bytes())
             .map_err(|_| PrivDropError::from((ErrorKind::SysError, "Invalid username")))?;
 
-        let mut pwd = unsafe { std::mem::zeroed::<libc::passwd>() };
+        let mut pwd = MaybeUninit::<libc::passwd>::uninit();
         let mut pwbuf = vec![0; INITIAL_BUFFER_SIZE];
         let mut pwent = std::ptr::null_mut::<libc::passwd>();
 
         let ret = unsafe {
             libc::getpwnam_r(
                 username.as_ptr(),
-                &mut pwd,
+                pwd.as_mut_ptr(),
                 pwbuf.as_mut_ptr(),
                 pwbuf.len(),
                 &mut pwent,
@@ -275,13 +283,13 @@ impl PrivDrop {
         let groupname = CString::new(group.as_bytes())
             .map_err(|_| PrivDropError::from((ErrorKind::SysError, "Invalid group name")))?;
 
-        let mut grp = unsafe { std::mem::zeroed::<libc::group>() };
-        let mut grbuf = vec![0; 4096];
+        let mut grp = MaybeUninit::<libc::group>::uninit();
+        let mut grbuf = vec![0; INITIAL_BUFFER_SIZE];
         let mut grent = std::ptr::null_mut::<libc::group>();
         let ret = unsafe {
             libc::getgrnam_r(
                 groupname.as_ptr(),
-                &mut grp,
+                grp.as_mut_ptr(),
                 grbuf.as_mut_ptr(),
                 grbuf.len(),
                 &mut grent,
@@ -344,7 +352,18 @@ impl PrivDrop {
     fn do_idchange(&self, ids: UserIds) -> Result<(), PrivDropError> {
         Self::uidcheck()?;
 
-        let mut groups = vec![];
+        // Estimate capacity to reduce allocations
+        let mut groups_capacity = 1; // Primary group
+        if let Some(ref group_list) = ids.group_list {
+            groups_capacity += group_list.len();
+        }
+        if self.include_default_supplementary_groups {
+            groups_capacity += MAX_GROUPS;
+        }
+
+        let mut groups = Vec::with_capacity(groups_capacity);
+
+        // Add default supplementary groups if requested
         if self.include_default_supplementary_groups {
             if let (Some(user), Some(gid)) = (&self.user, ids.gid) {
                 if let Some(group_list) = Self::default_group_list(user, gid)? {
@@ -357,21 +376,26 @@ impl PrivDrop {
                 )));
             }
         }
+
+        // Add explicitly specified groups
         if let Some(ref group_list) = ids.group_list {
             groups.extend(group_list.iter().cloned());
         }
+
         if let Some(gid) = ids.gid {
             groups.push(gid);
-            let mut unique_groups = vec![];
-            for group in groups {
-                if !unique_groups.contains(&group) {
-                    unique_groups.push(group);
-                }
-            }
+
+            // Use HashSet for efficient deduplication
+            let unique_groups: Vec<_> = groups
+                .into_iter()
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .collect();
+
             if unsafe { libc::setgroups(unique_groups.len() as _, unique_groups.as_ptr()) } != 0 {
                 return Err(PrivDropError::from((
                     ErrorKind::SysError,
-                    "Unable to revoke supplementary groups",
+                    "Unable to set supplementary groups",
                 )));
             }
             unistd::setgid(unistd::Gid::from_raw(gid))?;

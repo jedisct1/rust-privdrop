@@ -1,26 +1,33 @@
 use std::error::Error;
 use std::fmt;
 
+/// Types of errors that can occur during privilege dropping operations
 #[derive(PartialEq, Eq, Copy, Clone, Debug)]
+#[non_exhaustive]
 pub enum ErrorKind {
+    /// System-level error when interacting with OS privileges
     SysError,
 }
 
+/// Internal representation of privilege dropping errors
 #[derive(Debug)]
 enum ErrorRepr {
+    /// Error from the nix crate
     FromNix(nix::Error),
+    /// Error with a static description
     WithDescription(ErrorKind, &'static str),
 }
 
+/// Error type for privilege dropping operations
 #[derive(Debug)]
 pub struct PrivDropError {
     repr: ErrorRepr,
 }
 
 impl Error for PrivDropError {
-    fn cause(&self) -> Option<&dyn Error> {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self.repr {
-            ErrorRepr::FromNix(ref e) => Some(e as &dyn Error),
+            ErrorRepr::FromNix(ref e) => Some(e),
             _ => None,
         }
     }
@@ -29,8 +36,10 @@ impl Error for PrivDropError {
 impl fmt::Display for PrivDropError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         match self.repr {
-            ErrorRepr::FromNix(ref e) => e.fmt(f),
-            ErrorRepr::WithDescription(_, description) => description.fmt(f),
+            ErrorRepr::FromNix(ref e) => write!(f, "Privilege drop error: {}", e),
+            ErrorRepr::WithDescription(_, description) => {
+                write!(f, "Privilege drop error: {}", description)
+            }
         }
     }
 }
