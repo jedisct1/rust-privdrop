@@ -33,13 +33,28 @@ mod tests {
 /// `PrivDrop` structure for securely dropping privileges in Unix systems.
 ///
 /// This structure provides a builder pattern interface for configuring and
-/// executing privilege dropping operations. It allows:
-/// - Changing the root directory (chroot)
-/// - Switching to a non-root user
-/// - Setting group memberships
-/// - Managing supplementary groups
+/// executing privilege dropping operations. Privilege dropping is a critical security
+/// practice for applications that start with root permissions but need to operate
+/// with minimal privileges during normal execution.
 ///
-/// # Example
+/// ## Capabilities
+///
+/// This structure enables:
+/// - Changing the root directory (chroot) to isolate the application
+/// - Switching to a non-root user to eliminate root privileges
+/// - Setting primary group membership for appropriate resource access
+/// - Managing supplementary groups for fine-grained access control
+/// - Handling both named and numeric user/group identifiers
+///
+/// ## Usage Pattern
+///
+/// 1. Create a `PrivDrop` instance using `default()`
+/// 2. Configure desired privilege dropping operations using builder methods
+/// 3. Call `apply()` to atomically execute all operations
+/// 4. Handle any errors from the privileged operations
+///
+/// ## Basic Example
+///
 /// ```ignore
 /// privdrop::PrivDrop::default()
 ///     .chroot("/var/empty")
@@ -48,9 +63,13 @@ mod tests {
 ///     .unwrap_or_else(|e| { panic!("Failed to drop privileges: {}", e) });
 /// ```
 ///
-/// # Safety
-/// This structure handles privileged operations and should be used with care.
-/// All operations are performed atomically during the `apply()` call.
+/// ## Security Considerations
+///
+/// - This structure handles privileged operations and should be used with care
+/// - All operations are performed atomically during the `apply()` call to avoid
+///   potential security issues during partial privilege dropping
+/// - Root privileges are required to use this structure effectively
+/// - Once privileges are dropped, they cannot be regained
 #[derive(Default, Clone, Debug)]
 pub struct PrivDrop {
     chroot: Option<PathBuf>,
@@ -87,16 +106,59 @@ impl PrivDrop {
         self
     }
 
-    /// Sets a group name to switch to, if different from the user's primary group.
+    /// Sets a primary group name to switch to, if different from the user's default group.
+    ///
+    /// This method allows specifying a primary group that differs from the
+    /// default primary group associated with the user. This is useful for
+    /// customizing access permissions beyond the user's default settings.
+    ///
+    /// If not specified, and a user is set, the user's default primary group will be used.
+    ///
+    /// ## Example
+    ///
+    /// ```no_run
+    /// use privdrop::PrivDrop;
+    ///
+    /// PrivDrop::default()
+    ///     .user("www-data")
+    ///     .group("web-content")  // Use a custom primary group
+    ///     .apply()
+    ///     .expect("Failed to drop privileges");
+    /// ```
     ///
     /// # Arguments
-    /// * `group` - The group name to switch to
+    /// * `group` - The group name to switch to (can be a name or numeric ID if
+    ///   `fallback_to_ids_if_names_are_numeric` is enabled)
     pub fn group<S: AsRef<OsStr>>(mut self, group: S) -> Self {
         self.group = Some(group.as_ref().to_owned());
         self
     }
 
-    /// Includes the user's default supplementary groups in addition to specified groups.
+    /// Includes the user's default supplementary groups in addition to any explicitly specified groups.
+    ///
+    /// When this option is enabled, the system will include all supplementary groups that the
+    /// specified user belongs to by default, in addition to any groups specified via `group_list`.
+    /// This is useful when you want to maintain the user's standard group memberships while
+    /// also adding custom groups.
+    ///
+    /// ## Example
+    ///
+    /// ```no_run
+    /// use privdrop::PrivDrop;
+    ///
+    /// PrivDrop::default()
+    ///     .user("www-data")
+    ///     .group_list(&["web-content", "deployment"])  // Add specific groups
+    ///     .include_default_supplementary_groups()      // Also include default groups
+    ///     .apply()
+    ///     .expect("Failed to drop privileges");
+    /// ```
+    ///
+    /// ## Security Note
+    ///
+    /// Including default supplementary groups increases the permission scope of your application.
+    /// Only use this option when you specifically need access to resources controlled by the
+    /// user's default group memberships.
     pub fn include_default_supplementary_groups(mut self) -> Self {
         self.include_default_supplementary_groups = true;
         self
@@ -111,25 +173,72 @@ impl PrivDrop {
         self
     }
 
-    /// Sets the complete list of groups to switch to.
+    /// Sets the complete list of supplementary groups to switch to.
+    ///
+    /// This method allows specifying a list of supplementary groups that the process
+    /// should belong to after privileges are dropped. Supplementary groups provide
+    /// additional access permissions beyond what the primary group offers.
+    ///
+    /// ## Behavior Notes
+    ///
+    /// - If `include_default_supplementary_groups()` is also called, both the default
+    ///   groups and these explicitly specified groups will be included
+    /// - Duplicate groups are automatically handled (no need to filter)
+    /// - The primary group (set via `group()` or from the user's default) is always included
+    ///   automatically and doesn't need to be specified here
+    ///
+    /// ## Example
+    ///
+    /// ```no_run
+    /// use privdrop::PrivDrop;
+    ///
+    /// PrivDrop::default()
+    ///     .user("service-user")
+    ///     .group_list(&["www-data", "logs", "backups"])  // Set multiple supplementary groups
+    ///     .apply()
+    ///     .expect("Failed to drop privileges");
+    /// ```
     ///
     /// # Arguments
-    /// * `group_list` - List of group names to switch to
+    /// * `group_list` - List of group names to switch to (can include numeric IDs if
+    ///   `fallback_to_ids_if_names_are_numeric` is enabled)
     pub fn group_list<S: AsRef<OsStr>>(mut self, group_list: &[S]) -> Self {
         self.group_list = Some(group_list.iter().map(|x| x.as_ref().to_owned()).collect());
         self
     }
 
-    /// Applies the configured privilege changes.
+    /// Applies the configured privilege changes atomically.
     ///
-    /// This method must be called with root privileges. It will:
-    /// 1. Preload necessary system resources
-    /// 2. Look up all required user and group IDs
-    /// 3. Perform chroot if configured
-    /// 4. Change to the specified user and group IDs
+    /// This method executes all configured privilege-dropping operations in a secure,
+    /// predetermined sequence. It must be called with root privileges.
+    ///
+    /// ## Execution Sequence
+    ///
+    /// 1. Preload necessary system resources (locale data, error strings, timezone information)
+    ///    to prevent potential deadlocks after privilege drop
+    /// 2. Look up all required user and group IDs before dropping privileges
+    /// 3. Perform chroot operation if configured, changing to the new root directory
+    /// 4. Drop privileges by changing to the specified user and group IDs
+    ///
+    /// ## Security Guarantees
+    ///
+    /// - All operations occur atomically to prevent security gaps
+    /// - If any operation fails, the entire privilege drop fails, leaving the application
+    ///   in its original state rather than in a partially-privileged state
+    /// - Once privileges are dropped, they cannot be regained
+    ///
+    /// ## Error Handling
+    ///
+    /// This method returns detailed errors for various failure scenarios:
+    /// - Missing root privileges
+    /// - Invalid user or group names
+    /// - Failed chroot operations
+    /// - Issues setting user or group IDs
     ///
     /// # Errors
-    /// Returns `PrivDropError` if any operation fails
+    ///
+    /// Returns `PrivDropError` if any operation fails, with contextual information
+    /// about the specific failure point
     pub fn apply(self) -> Result<(), PrivDropError> {
         Self::preload()?;
         let ids = self.lookup_ids()?;
