@@ -199,22 +199,45 @@ impl PrivDrop {
             .map_err(|_| PrivDropError::from((ErrorKind::SysError, "Invalid username")))?;
 
         let mut pwd = MaybeUninit::<libc::passwd>::uninit();
-        let mut pwbuf = vec![0; INITIAL_BUFFER_SIZE];
         let mut pwent = std::ptr::null_mut::<libc::passwd>();
 
-        let ret = unsafe {
-            libc::getpwnam_r(
-                username.as_ptr(),
-                pwd.as_mut_ptr(),
-                pwbuf.as_mut_ptr(),
-                pwbuf.len(),
-                &mut pwent,
-            )
-        };
+        // Start with the initial buffer size and increase if needed
+        let mut bufsize = INITIAL_BUFFER_SIZE;
+        let mut pwbuf = vec![0; bufsize];
+
+        let mut ret;
+        loop {
+            ret = unsafe {
+                libc::getpwnam_r(
+                    username.as_ptr(),
+                    pwd.as_mut_ptr(),
+                    pwbuf.as_mut_ptr(),
+                    pwbuf.len(),
+                    &mut pwent,
+                )
+            };
+
+            // If we get ERANGE, the buffer was too small, double it and try again
+            if ret == libc::ERANGE {
+                bufsize *= 2;
+                pwbuf.resize(bufsize, 0);
+            } else {
+                break;
+            }
+        }
 
         if ret != 0 || pwent.is_null() {
             if !fallback_to_ids_if_names_are_numeric {
-                return Err(PrivDropError::from((ErrorKind::SysError, "User not found")));
+                if ret != 0 && ret == libc::ENOENT {
+                    return Err(PrivDropError::from((ErrorKind::SysError, "User not found")));
+                } else if ret != 0 {
+                    return Err(PrivDropError::from((
+                        ErrorKind::SysError,
+                        "Failed to look up user",
+                    )));
+                } else {
+                    return Err(PrivDropError::from((ErrorKind::SysError, "User not found")));
+                }
             }
 
             // Try to parse the username as a numeric UID
@@ -256,10 +279,12 @@ impl PrivDrop {
         let username = CString::new(user.as_bytes())
             .map_err(|_| PrivDropError::from((ErrorKind::SysError, "Invalid username")))?;
 
-        let mut groups = vec![0; MAX_GROUPS];
-        let mut ngroups = groups.len() as _;
+        // First call getgrouplist to get the number of groups
+        let mut groups = vec![0; 1]; // Initial small buffer to get count
+        let mut ngroups: libc::c_int = 0;
 
-        let ret = unsafe {
+        // getgrouplist returns -1 if the buffer is too small and updates ngroups
+        unsafe {
             libc::getgrouplist(
                 username.as_ptr(),
                 gid as _,
@@ -268,12 +293,29 @@ impl PrivDrop {
             )
         };
 
-        if ret == -1 {
-            return Ok(None);
+        // Now we know how many groups there are, allocate the proper size buffer
+        if ngroups > 0 {
+            groups = vec![0; ngroups as usize];
+
+            // Call again with the properly sized buffer
+            let ret = unsafe {
+                libc::getgrouplist(
+                    username.as_ptr(),
+                    gid as _,
+                    groups.as_mut_ptr(),
+                    &mut ngroups,
+                )
+            };
+
+            // This call should succeed now that we have the right buffer size
+            if ret >= 0 {
+                groups.truncate(ngroups as usize);
+                return Ok(Some(groups.into_iter().map(|g| g as libc::gid_t).collect()));
+            }
         }
 
-        groups.truncate(ngroups as _);
-        Ok(Some(groups.into_iter().map(|g| g as libc::gid_t).collect()))
+        // Something went wrong if we get here
+        Ok(None)
     }
 
     fn lookup_group(
@@ -284,24 +326,51 @@ impl PrivDrop {
             .map_err(|_| PrivDropError::from((ErrorKind::SysError, "Invalid group name")))?;
 
         let mut grp = MaybeUninit::<libc::group>::uninit();
-        let mut grbuf = vec![0; INITIAL_BUFFER_SIZE];
         let mut grent = std::ptr::null_mut::<libc::group>();
-        let ret = unsafe {
-            libc::getgrnam_r(
-                groupname.as_ptr(),
-                grp.as_mut_ptr(),
-                grbuf.as_mut_ptr(),
-                grbuf.len(),
-                &mut grent,
-            )
-        };
+
+        // Start with the initial buffer size and increase if needed
+        let mut bufsize = INITIAL_BUFFER_SIZE;
+        let mut grbuf = vec![0; bufsize];
+
+        let mut ret;
+        loop {
+            ret = unsafe {
+                libc::getgrnam_r(
+                    groupname.as_ptr(),
+                    grp.as_mut_ptr(),
+                    grbuf.as_mut_ptr(),
+                    grbuf.len(),
+                    &mut grent,
+                )
+            };
+
+            // If we get ERANGE, the buffer was too small, double it and try again
+            if ret == libc::ERANGE {
+                bufsize *= 2;
+                grbuf.resize(bufsize, 0);
+            } else {
+                break;
+            }
+        }
 
         if ret != 0 || grent.is_null() {
             if !fallback_to_ids_if_names_are_numeric {
-                return Err(PrivDropError::from((
-                    ErrorKind::SysError,
-                    "Group not found",
-                )));
+                if ret != 0 && ret == libc::ENOENT {
+                    return Err(PrivDropError::from((
+                        ErrorKind::SysError,
+                        "Group not found",
+                    )));
+                } else if ret != 0 {
+                    return Err(PrivDropError::from((
+                        ErrorKind::SysError,
+                        "Failed to look up group",
+                    )));
+                } else {
+                    return Err(PrivDropError::from((
+                        ErrorKind::SysError,
+                        "Group not found",
+                    )));
+                }
             }
             let group_str = group.to_str().ok_or_else(|| {
                 PrivDropError::from((
