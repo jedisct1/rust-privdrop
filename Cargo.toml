@@ -1,6 +1,6 @@
 [package]
 name = "privdrop"
-version = "0.5.6"
+version = "0.5.7"
 description = "Drop privileges on Unix by switching from root to another user or group, with supplementary group control and optional chroot."
 authors = ["Frank Denis <github@pureftpd.org>"]
 keywords = ["privileges", "drop", "unix", "chroot", "setuid"]
@@ -11,5 +11,5 @@ categories = ["os::unix-apis"]
 edition = "2018"
 
 [dependencies]
-libc = "0.2.172"
+libc = "0.2.189"
 nix = { version = "0.30.1", features = ["user", "fs"] }
