@@ -1,9 +1,9 @@
 [package]
 name = "privdrop"
 version = "0.5.6"
-description = "A simple crate to drop privileges"
+description = "Drop privileges on Unix by switching from root to another user or group, with supplementary group control and optional chroot."
 authors = ["Frank Denis <github@pureftpd.org>"]
-keywords = ["privileges", "drop"]
+keywords = ["privileges", "drop", "unix", "chroot", "setuid"]
 license = "ISC"
 homepage = "https://github.com/jedisct1/rust-privdrop"
 repository = "https://github.com/jedisct1/rust-privdrop"
